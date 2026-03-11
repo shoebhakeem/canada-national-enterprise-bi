@@ -1,188 +1,66 @@
 USE CorpCore_OLTP;
 GO
 
-/* 1) Departments */
-INSERT INTO oltp.Departments (DepartmentName)
-SELECT v.DepartmentName
-FROM (VALUES
- ('Sales'),
- ('Operations'),
- ('Finance'),
- ('HR'),
- ('Procurement'),
- ('PMO')
-) v(DepartmentName)
-WHERE NOT EXISTS (
-  SELECT 1 FROM oltp.Departments d WHERE d.DepartmentName = v.DepartmentName
+/* Products */
+IF OBJECT_ID('oltp.Products','U') IS NOT NULL DROP TABLE oltp.Products;
+GO
+CREATE TABLE oltp.Products (
+    ProductID     INT IDENTITY(1,1) PRIMARY KEY,
+    ProductName   NVARCHAR(200) NOT NULL,
+    ProductType   NVARCHAR(30)  NOT NULL, -- Hardware/Software
+    UnitPrice     DECIMAL(18,2) NOT NULL,
+    IsActive      BIT NOT NULL CONSTRAINT DF_Products_IsActive DEFAULT(1)
 );
 GO
 
-/* 2) Roles */
-INSERT INTO oltp.Roles (RoleName, JobFamily)
-SELECT v.RoleName, v.JobFamily
-FROM (VALUES
- ('Account Executive','Sales'),
- ('Sales Manager','Sales'),
- ('Project Manager','PMO'),
- ('Business Analyst','PMO'),
- ('BI Developer','PMO'),
- ('Field Technician','Operations'),
- ('Service Delivery Lead','Operations'),
- ('Procurement Specialist','Procurement'),
- ('Finance Analyst','Finance'),
- ('Accountant','Finance'),
- ('HR Specialist','HR'),
- ('Operations Manager','Operations')
-) v(RoleName, JobFamily)
-WHERE NOT EXISTS (
-  SELECT 1 FROM oltp.Roles r WHERE r.RoleName = v.RoleName
+/* Service Catalog */
+IF OBJECT_ID('oltp.ServiceCatalog','U') IS NOT NULL DROP TABLE oltp.ServiceCatalog;
+GO
+CREATE TABLE oltp.ServiceCatalog (
+    ServiceID     INT IDENTITY(1,1) PRIMARY KEY,
+    ServiceName   NVARCHAR(200) NOT NULL,
+    ServiceType   NVARCHAR(40)  NOT NULL, -- Installation/Implementation/Repair/Outsourcing
+    BaseRate      DECIMAL(18,2) NOT NULL, -- could be hourly or fixed base
+    IsActive      BIT NOT NULL CONSTRAINT DF_ServiceCatalog_IsActive DEFAULT(1)
 );
 GO
 
-/************************************************************************************/
-
-USE CorpCore_OLTP;
+/* Sales Orders (header) */
+IF OBJECT_ID('oltp.SalesOrders','U') IS NOT NULL DROP TABLE oltp.SalesOrders;
 GO
-
-/* 3) Employees (20) */
-;WITH Dept AS (
-    SELECT DepartmentID, DepartmentName FROM oltp.Departments
-),
-RoleMap AS (
-    SELECT RoleID, RoleName FROM oltp.Roles
-),
-CityPool AS (
-    SELECT CityID FROM oltp.Cities
-),
-SeedEmployees AS (
-    SELECT TOP (20)
-        CONCAT('EMP-', RIGHT('0000' + CAST(ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) AS VARCHAR(4)),4)) AS EmployeeCode,
-        CHOOSE(ABS(CHECKSUM(NEWID())) % 6 + 1, 'Ayaan','Zara','Omar','Noah','Liam','Maya') AS FirstName,
-        CHOOSE(ABS(CHECKSUM(NEWID())) % 6 + 1, 'Khan','Singh','Patel','Smith','Brown','Lee') AS LastName,
-        d.DepartmentID,
-        r.RoleID,
-        CASE WHEN ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) <= 5 
-             THEN 22  -- HQ CityID you provided
-             ELSE (SELECT TOP 1 CityID FROM CityPool ORDER BY NEWID())
-        END AS CityID,
-        DATEADD(DAY, -ABS(CHECKSUM(NEWID())) % 1500, CAST(GETDATE() AS DATE)) AS HireDate,
-        CHOOSE(ABS(CHECKSUM(NEWID())) % 2 + 1, 'Permanent','Contractor') AS EmploymentType,
-        'Active' AS Status,
-        NULL AS Email
-    FROM Dept d
-    CROSS JOIN RoleMap r
-)
-INSERT INTO oltp.Employees (EmployeeCode, FirstName, LastName, DepartmentID, RoleID, CityID, HireDate, EmploymentType, Status, Email)
-SELECT DISTINCT TOP (20)
-    e.EmployeeCode,
-    e.FirstName,
-    e.LastName,
-    e.DepartmentID,
-    e.RoleID,
-    e.CityID,
-    e.HireDate,
-    e.EmploymentType,
-    e.Status,
-    CONCAT(LOWER(e.FirstName), '.', LOWER(e.LastName), '@mshsolutions.ca') AS Email
-FROM SeedEmployees e
-WHERE NOT EXISTS (
-    SELECT 1 FROM oltp.Employees ex WHERE ex.EmployeeCode = e.EmployeeCode
+CREATE TABLE oltp.SalesOrders (
+    SalesOrderID   INT IDENTITY(1,1) PRIMARY KEY,
+    OrderNumber    NVARCHAR(30) NOT NULL UNIQUE, -- SO-000001
+    CustomerID     INT NOT NULL,
+    OrderDate      DATE NOT NULL,
+    SalesRepID     INT NULL, -- EmployeeID (sales)
+    CityID         INT NOT NULL, -- order city / customer city
+    Status         NVARCHAR(20) NOT NULL, -- Open/Closed/Cancelled
+    CONSTRAINT FK_SalesOrders_Customer FOREIGN KEY (CustomerID) REFERENCES oltp.Customers(CustomerID),
+    CONSTRAINT FK_SalesOrders_SalesRep FOREIGN KEY (SalesRepID) REFERENCES oltp.Employees(EmployeeID),
+    CONSTRAINT FK_SalesOrders_City     FOREIGN KEY (CityID)     REFERENCES oltp.Cities(CityID)
 );
 GO
 
-/* 4) Customers (20) */
-INSERT INTO oltp.Customers (CustomerName, Industry, Segment, CityID)
-SELECT TOP (20)
-    CONCAT('Customer ', ROW_NUMBER() OVER (ORDER BY (SELECT NULL))),
-    CHOOSE(ABS(CHECKSUM(NEWID())) % 5 + 1, 'Telecom','Retail','Government','Energy','Healthcare'),
-    CHOOSE(ABS(CHECKSUM(NEWID())) % 3 + 1, 'SMB','Enterprise','Public'),
-    (SELECT TOP 1 CityID FROM oltp.Cities ORDER BY NEWID())
-FROM sys.objects
-WHERE NOT EXISTS (SELECT 1 FROM oltp.Customers);
+/* Sales Order Lines (details) */
+IF OBJECT_ID('oltp.SalesOrderLines','U') IS NOT NULL DROP TABLE oltp.SalesOrderLines;
 GO
-
-/* 5) Vendors (10) */
-INSERT INTO oltp.Vendors (VendorName, Category, CityID)
-SELECT TOP (10)
-    CONCAT('Vendor ', ROW_NUMBER() OVER (ORDER BY (SELECT NULL))),
-    CHOOSE(ABS(CHECKSUM(NEWID())) % 4 + 1, 'Hardware Supplier','Software Distributor','Subcontractor','Logistics'),
-    (SELECT TOP 1 CityID FROM oltp.Cities ORDER BY NEWID())
-FROM sys.objects
-WHERE NOT EXISTS (SELECT 1 FROM oltp.Vendors);
-GO
-
-/* Validation */
-SELECT 
- (SELECT COUNT(*) FROM oltp.Departments) AS Departments,
- (SELECT COUNT(*) FROM oltp.Roles) AS Roles,
- (SELECT COUNT(*) FROM oltp.Employees) AS Employees,
- (SELECT COUNT(*) FROM oltp.Customers) AS Customers,
- (SELECT COUNT(*) FROM oltp.Vendors) AS Vendors;
-GO
-
-
-/*UPDATE*/
-USE CorpCore_OLTP;
-GO
-
--- If the failed insert created 0 employees, this is safe.
--- If some employees exist, this avoids duplicates by EmployeeCode.
-DECLARE @HQCityID INT = 22;
-
-;WITH Dept AS (
-    SELECT DepartmentID, DepartmentName FROM oltp.Departments
-),
-RoleMap AS (
-    SELECT RoleID, RoleName FROM oltp.Roles
-),
-EmpSeed AS (
-    SELECT *
-    FROM (VALUES
-    ('EMP-0001','Ayaan','Khan','Sales','Account Executive', @HQCityID),
-    ('EMP-0002','Zara','Patel','Sales','Sales Manager',      @HQCityID),
-    ('EMP-0003','Omar','Singh','PMO','Project Manager',      @HQCityID),
-    ('EMP-0004','Noah','Smith','PMO','Business Analyst',     @HQCityID),
-    ('EMP-0005','Liam','Brown','PMO','BI Developer',         @HQCityID),
-
-    ('EMP-0006','Maya','Lee','Operations','Field Technician', (SELECT TOP 1 CityID FROM oltp.Cities ORDER BY NEWID())),
-    ('EMP-0007','Ayaan','Smith','Operations','Service Delivery Lead', (SELECT TOP 1 CityID FROM oltp.Cities ORDER BY NEWID())),
-    ('EMP-0008','Zara','Brown','Operations','Operations Manager', (SELECT TOP 1 CityID FROM oltp.Cities ORDER BY NEWID())),
-    ('EMP-0009','Omar','Patel','Finance','Finance Analyst',  (SELECT TOP 1 CityID FROM oltp.Cities ORDER BY NEWID())),
-    ('EMP-0010','Noah','Khan','Finance','Accountant',        (SELECT TOP 1 CityID FROM oltp.Cities ORDER BY NEWID())),
-
-    ('EMP-0011','Liam','Singh','HR','HR Specialist',         (SELECT TOP 1 CityID FROM oltp.Cities ORDER BY NEWID())),
-    ('EMP-0012','Maya','Patel','Procurement','Procurement Specialist', (SELECT TOP 1 CityID FROM oltp.Cities ORDER BY NEWID())),
-    ('EMP-0013','Ayaan','Lee','Sales','Account Executive',   (SELECT TOP 1 CityID FROM oltp.Cities ORDER BY NEWID())),
-    ('EMP-0014','Zara','Smith','PMO','Project Manager',      (SELECT TOP 1 CityID FROM oltp.Cities ORDER BY NEWID())),
-    ('EMP-0015','Omar','Brown','PMO','BI Developer',         (SELECT TOP 1 CityID FROM oltp.Cities ORDER BY NEWID())),
-
-    ('EMP-0016','Noah','Lee','Operations','Field Technician', (SELECT TOP 1 CityID FROM oltp.Cities ORDER BY NEWID())),
-    ('EMP-0017','Liam','Patel','Operations','Field Technician', (SELECT TOP 1 CityID FROM oltp.Cities ORDER BY NEWID())),
-    ('EMP-0018','Maya','Khan','Sales','Sales Manager',       (SELECT TOP 1 CityID FROM oltp.Cities ORDER BY NEWID())),
-    ('EMP-0019','Ayaan','Patel','Finance','Finance Analyst', (SELECT TOP 1 CityID FROM oltp.Cities ORDER BY NEWID())),
-    ('EMP-0020','Zara','Singh','PMO','Business Analyst',     (SELECT TOP 1 CityID FROM oltp.Cities ORDER BY NEWID()))
-    ) AS v(EmployeeCode, FirstName, LastName, DepartmentName, RoleName, CityID)
-)
-INSERT INTO oltp.Employees
-(EmployeeCode, FirstName, LastName, DepartmentID, RoleID, CityID, HireDate, EmploymentType, Status, Email)
-SELECT
-    e.EmployeeCode,
-    e.FirstName,
-    e.LastName,
-    d.DepartmentID,
-    r.RoleID,
-    e.CityID,
-    DATEADD(DAY, -ABS(CHECKSUM(NEWID())) % 1500, CAST(GETDATE() AS DATE)) AS HireDate,
-    CASE WHEN ABS(CHECKSUM(NEWID())) % 2 = 0 THEN 'Permanent' ELSE 'Contractor' END AS EmploymentType,
-    'Active' AS Status,
-    CONCAT(LOWER(e.FirstName), '.', LOWER(e.LastName), '@mshsolutions.ca') AS Email
-FROM EmpSeed e
-JOIN Dept d     ON d.DepartmentName = e.DepartmentName
-JOIN RoleMap r  ON r.RoleName = e.RoleName
-WHERE NOT EXISTS (
-    SELECT 1 FROM oltp.Employees ex WHERE ex.EmployeeCode = e.EmployeeCode
+CREATE TABLE oltp.SalesOrderLines (
+    SalesOrderLineID INT IDENTITY(1,1) PRIMARY KEY,
+    SalesOrderID     INT NOT NULL,
+    LineType         NVARCHAR(20) NOT NULL, -- Product/Service
+    ProductID        INT NULL,
+    ServiceID        INT NULL,
+    Quantity         DECIMAL(18,2) NOT NULL,
+    UnitPrice        DECIMAL(18,2) NOT NULL,
+    LineAmount       AS (Quantity * UnitPrice) PERSISTED,
+    CONSTRAINT FK_SOL_Order   FOREIGN KEY (SalesOrderID) REFERENCES oltp.SalesOrders(SalesOrderID),
+    CONSTRAINT FK_SOL_Product FOREIGN KEY (ProductID)    REFERENCES oltp.Products(ProductID),
+    CONSTRAINT FK_SOL_Service FOREIGN KEY (ServiceID)    REFERENCES oltp.ServiceCatalog(ServiceID),
+    CONSTRAINT CK_SOL_LineType CHECK (
+        (LineType='Product' AND ProductID IS NOT NULL AND ServiceID IS NULL)
+        OR
+        (LineType='Service' AND ServiceID IS NOT NULL AND ProductID IS NULL)
+    )
 );
-GO
-
-SELECT COUNT(*) AS Employees FROM oltp.Employees;
 GO
